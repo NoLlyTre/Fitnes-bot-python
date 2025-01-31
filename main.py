@@ -1,67 +1,78 @@
 import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram import F
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import asyncio
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.filters import Command 
 
-bot = Bot(token='')
+logging.basicConfig(level=logging.INFO)
+
+
+TOKEN = ""
+
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-keyboard.add(
-    KeyboardButton("/motivation"),
-    KeyboardButton("/diet"),
-    KeyboardButton("/health_tips"),
-    KeyboardButton("/progress"),
-    KeyboardButton("/recipes")
+keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Мотивация")],
+        [KeyboardButton(text="Диета")],
+        [KeyboardButton(text="Советы по здоровью")],
+        [KeyboardButton(text="Прогресс")],
+        [KeyboardButton(text="Рецепты")]
+    ],
+    resize_keyboard=True
 )
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.reply("Привет! Я твой фитнес-бот. Вот что я могу:\n"
-                        "1. Мотивация — вдохновляющие цитаты.\n"
-                        "2. Диета — советы по отслеживанию рациона.\n"
-                        "3. Полезные советы для здоровья.\n"
-                        "4. Прогресс — как отслеживать достижения.\n"
-                        "5. Рецепты — здоровые и вкусные блюда.",
-                        reply_markup=keyboard)
+    await message.answer(
+        "Привет! Я твой фитнес-бот. Вот что я могу:\n"
+        "1. 'Мотивация' — вдохновляющие цитаты.\n"
+        "2. 'Диета' — советы по отслеживанию рациона.\n"
+        "3. 'Советы по здоровью' — полезные рекомендации.\n"
+        "4. 'Прогресс' — как отслеживать достижения.\n"
+        "5. 'Рецепты' — здоровые и вкусные блюда.",
+        reply_markup=keyboard
+    )
 
-@dp.message(Command("motivation"))
+@dp.message(lambda message: message.text == "Мотивация")
 async def send_motivation(message: types.Message):
-    await message.reply("Не забывай: каждый шаг к цели — это успех!\n"
-                        "Подумай о своих целях и запиши их. Это поможет тебе не потерять мотивацию.\n"
-                        "Кроме того, вот еще одна цитата: \"Секрет успеха в том, чтобы начать!\"",
-                        reply_markup=keyboard)
+    await message.answer("Не забывай: каждый шаг к цели — это успех!\n"
+                         "Запиши свои цели, чтобы не потерять мотивацию.\n"
+                         "Цитата: \"Секрет успеха в том, чтобы начать!\"")
 
-@dp.message(Command("diet"))
+@dp.message(lambda message: message.text == "Диета")
 async def send_diet_tracker(message: types.Message):
-    await message.reply("Отслеживайте свой рацион, записывая, что вы едите. Можно использовать таблицу или приложение.\n"
-                        "Попробуйте вести дневник питания и отмечать свои чувства после еды. Это поможет вам осознать, какие продукты вам подходят.",
-                        reply_markup=keyboard)
+    await message.answer("Отслеживайте свой рацион, записывая, что вы едите. "
+                         "Попробуйте вести дневник питания и отмечать свои чувства после еды.")
 
-@dp.message(Command("health_tips"))
+@dp.message(lambda message: message.text == "Советы по здоровью")
 async def send_health_tips(message: types.Message):
-    await message.reply("Пейте достаточно воды и старайтесь включать в рацион больше овощей!\n"
-                        "Также не забывайте про регулярные физические нагрузки. Даже 30 минут в день могут значительно улучшить ваше самочувствие.",
-                        reply_markup=keyboard)
+    await message.answer("Полезные советы для здоровья:\n"
+                         "- Пейте больше воды\n"
+                         "- Двигайтесь каждый день\n"
+                         "- Сон не менее 7-8 часов\n"
+                         "- Правильное питание — залог хорошего самочувствия!")
 
-@dp.message(Command("progress"))
-async def send_progress_statistics(message: types.Message):
-    await message.reply("Статистика прогресса поможет вам видеть свои достижения и расширять цели.\n"
-                        "Рекомендуется записывать свои замеры каждый месяц и анализировать результаты. Так будет легче понять, что работает, а что нет.",
-                        reply_markup=keyboard)
+@dp.message(lambda message: message.text == "Прогресс")
+async def send_progress_tips(message: types.Message):
+    await message.answer("Как отслеживать свой прогресс:\n"
+                         "- Делайте замеры тела раз в неделю\n"
+                         "- Ведите дневник тренировок\n"
+                         "- Используйте фото до/после\n"
+                         "- Следите за своим самочувствием, а не только за цифрами на весах!")
 
-@dp.message(Command("recipes"))
-async def send_healthy_recipes(message: types.Message):
-    await message.reply("Вот вам простой и здоровый рецепт: Курица с овощами на гриле. Попробуйте!\n"
-                        "Инструкция: замаринуйте курицу, добавьте любимые овощи и готовьте на гриле 20-30 минут. "
-                        "Подавайте с зеленью и лимоном для усиления вкуса. Приятного аппетита!",
-                        reply_markup=keyboard)
+@dp.message(lambda message: message.text == "Рецепты")
+async def send_recipes(message: types.Message):
+    await message.answer("Вот несколько полезных рецептов:\n"
+                         "1. Овсянка с ягодами и орехами\n"
+                         "2. Куриная грудка с овощами на пару\n"
+                         "3. Смузи из банана, шпината и миндального молока\n"
+                         "4. Творожный десерт с медом и орехами")
 
 async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
-
