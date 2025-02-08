@@ -20,7 +20,7 @@ from collections import defaultdict
 import time
 import random
 
-TOKEN = "7997378459:AAE4Sd0D-Sjbf-bvEfub7cHeVSIStKLMjuc"
+TOKEN = ""
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
