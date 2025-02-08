@@ -16,7 +16,9 @@
 Требования
 
 Python: 3.7 или выше
+
 Библиотеки:
+
 aiogram
 
 aiosqlite
