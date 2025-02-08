@@ -25,7 +25,7 @@ TOKEN = "7997378459:AAE4Sd0D-Sjbf-bvEfub7cHeVSIStKLMjuc"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Настройка расширенного логирования
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,7 +33,7 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
         logging.handlers.RotatingFileHandler(
             'bot.log',
-            maxBytes=10485760,  # 10MB
+            maxBytes=10485760,  
             backupCount=5,
             encoding='utf-8'
         )
@@ -42,7 +42,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Создаем пул соединений с базой данных
+
 class DatabasePool:
     def __init__(self, database_name: str):
         self.database_name = database_name
@@ -53,7 +53,7 @@ class DatabasePool:
     async def acquire(self) -> AsyncGenerator[aiosqlite.Connection, None]:
         if not self._pool:
             conn = await aiosqlite.connect(self.database_name)
-            await conn.execute("PRAGMA journal_mode=WAL")  # Включаем WAL режим для лучшей производительности
+            await conn.execute("PRAGMA journal_mode=WAL")  
         else:
             conn = self._pool.pop()
             
@@ -71,10 +71,10 @@ class DatabasePool:
             else:
                 await conn.close()
 
-# Создаем экземпляр пула
+
 db_pool = DatabasePool('fitness_bot.db')
 
-# Функция для безопасного выполнения SQL-запросов
+
 async def execute_db_query(query: str, params: tuple = None, fetch: bool = False):
     async with db_pool.acquire() as conn:
         try:
@@ -144,13 +144,13 @@ tracking_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Добавим новые клавиатуры с кнопкой отмены
+
 cancel_keyboard = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="❌ Отмена")]],
     resize_keyboard=True
 )
 
-# Middleware для ограничения частоты запросов
+
 class ThrottlingMiddleware(BaseMiddleware):
     def __init__(self, rate_limit=1):
         self.rate_limit = rate_limit
@@ -161,7 +161,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         current_time = time.time()
         user_data = self.users[user_id]
         
-        # Сброс счетчика если прошло больше секунды
+        
         if current_time - user_data["last_request"] > 1:
             user_data["request_count"] = 0
             
@@ -174,7 +174,7 @@ class ThrottlingMiddleware(BaseMiddleware):
             
         return await handler(event, data)
 
-# Регистрируем middleware
+
 dp.message.middleware(ThrottlingMiddleware())
 
 @dp.message(Command("start"))
@@ -189,19 +189,19 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboard
     )
 
-# Функция для получения случайной цитаты
+
 async def get_random_quote() -> str:
     try:
         with open('quotes.txt', 'r', encoding='utf-8') as file:
             quotes = file.readlines()
-        # Удаляем пустые строки и пробелы
+        
         quotes = [quote.strip() for quote in quotes if quote.strip()]
         return random.choice(quotes)
     except Exception as e:
         logger.error(f"Error reading quotes file: {e}")
         return "\"Самый трудный шаг — это начало, все остальное проще!\""
 
-# Обновляем обработчик мотивации
+
 @dp.message(lambda message: message.text == "💪 Мотивация")
 async def send_motivation(message: types.Message):
     try:
@@ -273,7 +273,7 @@ async def weight_gain_recipes(message: types.Message):
 
 def calculate_portions(weight: float, recipe_type: str) -> dict:
     """Рассчитывает порции ингредиентов на основе веса пользователя"""
-    base_weight = 70  # базовый вес для расчета
+    base_weight = 70  
     multiplier = weight / base_weight
     
     recipes = {
@@ -322,7 +322,7 @@ def calculate_portions(weight: float, recipe_type: str) -> dict:
 @dp.message(lambda message: message.text in ["🥗 Салат с курицей", "🥩 Стейк с рисом"])
 async def send_recipe_details(message: types.Message):
     try:
-        # Получаем вес пользователя из базы данных
+        
         weight_record = await execute_db_query(
             """SELECT weight FROM weight_records 
                WHERE user_id = ? 
@@ -344,7 +344,7 @@ async def send_recipe_details(message: types.Message):
             await message.answer("Извините, рецепт временно недоступен")
             return
             
-        # Формируем текст рецепта
+        
         recipe_text = f"{message.text}\n\nИнгредиенты (расчет на {weight} кг веса):\n"
         for ingredient, amount in recipe["ingredients"].items():
             recipe_text += f"- {ingredient}: {amount} г\n"
@@ -503,7 +503,7 @@ async def process_calories_goal(message: types.Message, state: FSMContext):
 @dp.message(lambda message: message.text == "📊 Показать статистику")
 async def show_statistics(message: types.Message):
     try:
-        # Получаем цель по калориям
+        
         target_result = await execute_db_query(
             "SELECT target_calories FROM users WHERE user_id = ?",
             (message.from_user.id,),
@@ -511,7 +511,7 @@ async def show_statistics(message: types.Message):
         )
         target_calories = target_result[0][0] if target_result else 2000
 
-        # Получаем статистику калорий
+        
         calories_data = await execute_db_query(
             """SELECT date, SUM(calories) 
                FROM meal_records 
@@ -524,7 +524,7 @@ async def show_statistics(message: types.Message):
         dates = [row[0] for row in calories_data]
         calories = [row[1] for row in calories_data]
 
-        # Получаем статистику веса
+        
         weight_data = await execute_db_query(
             """SELECT date, weight
                FROM weight_records
@@ -542,11 +542,11 @@ async def show_statistics(message: types.Message):
             await message.answer("Нет данных для отображения статистики.")
             return
 
-        # Создаем график с двумя осями Y
+        
         fig = go.Figure()
 
         if dates:
-            # График калорий
+            
             fig.add_trace(go.Scatter(
                 x=dates,
                 y=calories,
@@ -555,7 +555,7 @@ async def show_statistics(message: types.Message):
                 line=dict(color='blue')
             ))
             
-            # Добавляем линию цели
+            
             fig.add_hline(
                 y=target_calories,
                 line_dash="dash",
@@ -564,7 +564,7 @@ async def show_statistics(message: types.Message):
             )
 
         if weight_dates:
-            # График веса
+            
             fig.add_trace(go.Scatter(
                 x=weight_dates,
                 y=weights,
@@ -588,15 +588,15 @@ async def show_statistics(message: types.Message):
 
         img_bytes = fig.to_image(format="png")
         buf = io.BytesIO(img_bytes)
-        buf.seek(0)  # Убедимся, что указатель в начале файла
+        buf.seek(0)  
         
-        # Создаем InputFile из буфера
+        
         input_file = types.BufferedInputFile(
             buf.getvalue(),
             filename="statistics.png"
         )
         
-        # Формируем текстовый отчет
+        
         report = "📊 Статистика за последнюю неделю:\n\n"
         
         if dates:
@@ -634,7 +634,7 @@ async def back_to_main_menu(message: types.Message):
     "🥞 Протеиновые блины"
 ])
 async def send_other_recipe_details(message: types.Message):
-    # Добавляем новые рецепты в словарь
+    
     recipes = {
         "🐟 Запеченная рыба с овощами": {
             "base": {
@@ -705,7 +705,7 @@ async def send_other_recipe_details(message: types.Message):
     }
     
     try:
-        # Получаем вес пользователя
+        
         weight_record = await execute_db_query(
             """SELECT weight FROM weight_records 
                WHERE user_id = ? 
@@ -727,8 +727,8 @@ async def send_other_recipe_details(message: types.Message):
             await message.answer("Извините, рецепт временно недоступен")
             return
             
-        # Рассчитываем порции
-        multiplier = weight / 70  # базовый вес 70 кг
+        
+        multiplier = weight / 70  
         adjusted_ingredients = {
             ingredient: round(amount * multiplier)
             for ingredient, amount in recipe["base"].items()
@@ -737,7 +737,7 @@ async def send_other_recipe_details(message: types.Message):
         total_weight = sum(adjusted_ingredients.values())
         total_calories = round(total_weight * recipe["calories_per_100g"] / 100)
         
-        # Формируем текст рецепта
+        
         recipe_text = f"{message.text}\n\nИнгредиенты (расчет на {weight} кг веса):\n"
         for ingredient, amount in adjusted_ingredients.items():
             recipe_text += f"- {ingredient}: {amount} г\n"
@@ -789,10 +789,10 @@ async def main():
         logger.info("Starting bot...")
         await init_db()
         
-        # Настраиваем повторные попытки для webhook
+        
         await bot.delete_webhook(drop_pending_updates=True)
         
-        # Запускаем бота с обработкой ошибок
+        
         await dp.start_polling(
             bot,
             allowed_updates=dp.resolve_used_update_types(),
