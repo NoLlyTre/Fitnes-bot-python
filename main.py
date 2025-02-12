@@ -16,10 +16,14 @@ from typing import AsyncGenerator
 import logging.handlers
 from collections import defaultdict
 import os
+from datetime import datetime, timedelta
+from aiogram.client.session.aiohttp import AiohttpSession
+import aiohttp
 
-TOKEN = "здесь должен быть ваш токен от @botfather"
+TOKEN = "7997378459:AAE4Sd0D-Sjbf-bvEfub7cHeVSIStKLMjuc"
 
-bot = Bot(token=TOKEN)
+# Инициализируем бота и диспетчер
+bot = None  # Будет инициализирован в main()
 dp = Dispatcher()
 
 logging.basicConfig(
@@ -83,6 +87,115 @@ class UserStates(StatesGroup):
     WAITING_FOR_WEIGHT = State()
     WAITING_FOR_CALORIES = State()
     WAITING_FOR_MEAL = State()
+    WAITING_FOR_REMINDER_TYPE = State()
+    WAITING_FOR_REMINDER_TIME = State()
+    WAITING_FOR_REMINDER_DAYS = State()
+    WAITING_FOR_FOOD_NAME = State()
+
+# Словарь с примерными калориями для распространенных продуктов (на 100 грамм)
+FOOD_CALORIES = {
+    "яблоко": 52,
+    "банан": 89,
+    "куриная грудка": 165,
+    "рис": 130,
+    "гречка": 343,
+    "овсянка": 68,
+    "творог": 103,
+    "яйцо": 155,
+    "молоко": 42,
+    "хлеб": 265,
+    "картофель": 77,
+    "морковь": 41,
+    "помидор": 18,
+    "огурец": 15,
+    "сыр": 364,
+    "йогурт": 59,
+    "макароны": 344,
+    "говядина": 250,
+    "лосось": 208,
+    "авокадо": 160
+}
+
+@dp.callback_query(lambda c: c.data == "calorie_calculator")
+async def process_calorie_calculator(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await state.set_state(UserStates.WAITING_FOR_FOOD_NAME)
+    
+    # Создаем клавиатуру с популярными продуктами
+    food_keyboard = []
+    current_row = []
+    
+    for food in list(FOOD_CALORIES.keys())[:12]:  # Показываем только первые 12 продуктов
+        if len(current_row) == 2:
+            food_keyboard.append(current_row)
+            current_row = []
+        current_row.append(InlineKeyboardButton(text=food, callback_data=f"food_{food}"))
+    
+    if current_row:
+        food_keyboard.append(current_row)
+    
+    food_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
+    
+    food_choice_keyboard = InlineKeyboardMarkup(inline_keyboard=food_keyboard)
+    
+    await callback_query.message.edit_text(
+        "🧮 Калькулятор калорий\n\n"
+        "Выберите продукт из списка или введите его название.\n"
+        "Я подскажу количество калорий на 100 грамм продукта.",
+        reply_markup=food_choice_keyboard
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("food_"))
+async def process_food_choice(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    food_name = callback_query.data.replace("food_", "")
+    calories = FOOD_CALORIES.get(food_name)
+    
+    await callback_query.message.edit_text(
+        f"🍽 {food_name.capitalize()}:\n"
+        f"Калорийность: {calories} ккал на 100 грамм\n\n"
+        "Хотите рассчитать калории для другого продукта?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Рассчитать ещё", callback_data="calorie_calculator")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tracking")]
+        ])
+    )
+
+@dp.message(UserStates.WAITING_FOR_FOOD_NAME)
+async def process_food_name(message: types.Message, state: FSMContext):
+    food_name = message.text.lower()
+    calories = FOOD_CALORIES.get(food_name)
+    
+    if calories:
+        await message.answer(
+            f"🍽 {food_name.capitalize()}:\n"
+            f"Калорийность: {calories} ккал на 100 грамм\n\n"
+            "Хотите рассчитать калории для другого продукта?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Рассчитать ещё", callback_data="calorie_calculator")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tracking")]
+            ])
+        )
+    else:
+        similar_foods = []
+        for food in FOOD_CALORIES:
+            if food.startswith(food_name[:2]):
+                similar_foods.append(food)
+        
+        if similar_foods:
+            text = "Продукт не найден. Возможно, вы имели в виду:\n" + "\n".join(similar_foods)
+        else:
+            text = "Извините, такой продукт не найден в базе данных. Попробуйте другой продукт."
+        
+        await message.answer(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="calorie_calculator")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tracking")]
+            ])
+        )
+    
+    await state.clear()
 
 # Заменяем клавиатуры на инлайн версии
 main_keyboard = InlineKeyboardMarkup(
@@ -91,7 +204,8 @@ main_keyboard = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="🏋️ Тренировка", callback_data="workout")],
         [InlineKeyboardButton(text="💡 Советы по здоровью", callback_data="health_tips")],
         [InlineKeyboardButton(text="📈 Прогресс", callback_data="progress")],
-        [InlineKeyboardButton(text="🍴 Рецепты", callback_data="recipes")]
+        [InlineKeyboardButton(text="🍴 Рецепты", callback_data="recipes")],
+        [InlineKeyboardButton(text="⏰ Управление напоминаниями", callback_data="manage_reminders")]
     ]
 )
 
@@ -149,6 +263,14 @@ tracking_keyboard = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="📊 Показать статистику", callback_data="show_stats")],
         [InlineKeyboardButton(text="🎯 Установить цель калорий", callback_data="set_calories")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_main")]
+    ]
+)
+
+reminder_type_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🏋️ Тренировка", callback_data="reminder_workout")],
+        [InlineKeyboardButton(text="🍽 Прием пищи", callback_data="reminder_meal")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ]
 )
 
@@ -388,7 +510,8 @@ async def cmd_start(message: types.Message):
         "2. 🏋️ Тренировка — персональный план тренировок\n"
         "3. 💡 Советы по здоровью — полезные рекомендации\n"
         "4. 📈 Прогресс — как отслеживать достижения\n"
-        "5. 🍴 Рецепты — здоровые и вкусные блюда"
+        "5. 🍴 Рецепты — здоровые и вкусные блюда\n"
+        "6. ⏰ Управление напоминаниями — настройка уведомлений о тренировках и приемах пищи"
     )
     
     try:
@@ -429,9 +552,20 @@ async def init_db():
             shown_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         )''',
+        '''CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            reminder_type TEXT,
+            reminder_time TEXT,
+            days TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )''',
         'CREATE INDEX IF NOT EXISTS idx_weight_records_user_date ON weight_records(user_id, date)',
         'CREATE INDEX IF NOT EXISTS idx_meal_records_user_date ON meal_records(user_id, date)',
-        'CREATE INDEX IF NOT EXISTS idx_shown_quotes_user ON shown_quotes(user_id)'
+        'CREATE INDEX IF NOT EXISTS idx_shown_quotes_user ON shown_quotes(user_id)',
+        'CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id)'
     ]
     
     for query in queries:
@@ -794,37 +928,81 @@ async def cancel_action(message: types.Message, state: FSMContext):
     else:
         await message.answer("Нет активного действия для отмены.", reply_markup=main_keyboard)
 
-@dp.message(lambda message: message.text == "📝 Записать приём пищи")
-async def record_meal(message: types.Message, state: FSMContext):
-    await state.set_state(UserStates.WAITING_FOR_MEAL)
-    await message.answer(
-        "Введите информацию о приёме пищи в формате:\n"
-        "Тип приёма пищи (завтрак/обед/ужин/перекус) - калории\n"
-        "Например: завтрак - 500\n\n"
-        "Для отмены нажмите кнопку ❌ Отмена",
-        reply_markup=cancel_keyboard
-    )
+def calculate_calories(food_name: str, grams: float) -> int:
+    """Рассчитывает калории для заданного количества продукта"""
+    calories_per_100g = FOOD_CALORIES.get(food_name.lower())
+    if calories_per_100g:
+        return int((calories_per_100g * grams) / 100)
+    return None
 
 @dp.message(UserStates.WAITING_FOR_MEAL)
 async def process_meal(message: types.Message, state: FSMContext):
     try:
-        meal_type, calories = message.text.split('-')
-        meal_type = meal_type.strip().lower()
-        calories = int(calories.strip())
+        # Проверяем формат: "продукт граммы" или "тип_приема_пищи - калории"
+        if " - " in message.text:
+            meal_type, calories = message.text.split('-')
+            meal_type = meal_type.strip().lower()
+            calories = int(calories.strip())
+        else:
+            # Пытаемся разобрать формат "продукт граммы"
+            try:
+                food_name, grams = message.text.rsplit(" ", 1)
+                food_name = food_name.strip().lower()
+                grams = float(grams.strip())
+                
+                calories = calculate_calories(food_name, grams)
+                if calories is None:
+                    similar_foods = []
+                    for food in FOOD_CALORIES:
+                        if food.startswith(food_name[:2]):
+                            similar_foods.append(food)
+                    
+                    if similar_foods:
+                        await message.answer(
+                            "Продукт не найден. Возможно, вы имели в виду:\n" + 
+                            "\n".join(similar_foods) + 
+                            "\n\nВведите название из списка и количество грамм",
+                            reply_markup=cancel_keyboard
+                        )
+                    else:
+                        await message.answer(
+                            "Продукт не найден в базе. Попробуйте другой продукт или используйте формат:\n"
+                            "тип_приема_пищи - калории",
+                            reply_markup=cancel_keyboard
+                        )
+                    return
+                
+                meal_type = "прием пищи"
+            except ValueError:
+                await message.answer(
+                    "Неверный формат. Используйте:\n"
+                    "1. [продукт] [граммы] (например: яблоко 100)\n"
+                    "2. [тип_приема_пищи] - [калории] (например: завтрак - 500)",
+                    reply_markup=cancel_keyboard
+                )
+                return
         
+        current_date = datetime.now().strftime('%Y-%m-%d')
         await execute_db_query(
             "INSERT INTO meal_records (user_id, meal_type, calories, date) VALUES (?, ?, ?, ?)",
-            (message.from_user.id, meal_type, calories, datetime.datetime.now().strftime('%Y-%m-%d'))
+            (message.from_user.id, meal_type, calories, current_date)
         )
         
-        await message.answer("Приём пищи успешно записан! 📝", reply_markup=tracking_keyboard)
+        # Формируем сообщение об успешной записи
+        if " - " not in message.text:
+            await message.answer(
+                f"✅ Записано: {food_name.capitalize()} - {grams}г\n"
+                f"Калорийность: {calories} ккал",
+                reply_markup=tracking_keyboard
+            )
+        else:
+            await message.answer(
+                f"✅ {meal_type.capitalize()} записан: {calories} ккал",
+                reply_markup=tracking_keyboard
+            )
+        
         await state.clear()
-    except ValueError:
-        await message.answer(
-            "Неверный формат. Введите в формате: завтрак - 500\n"
-            "Или нажмите ❌ Отмена для отмены действия",
-            reply_markup=cancel_keyboard
-        )
+        
     except Exception as e:
         logger.error(f"Error in process_meal for user {message.from_user.id}: {e}")
         await message.answer(
@@ -854,9 +1032,10 @@ async def process_weight(message: types.Message, state: FSMContext):
             )
             return
 
+        current_date = datetime.now().strftime('%Y-%m-%d')
         await execute_db_query(
             "INSERT INTO weight_records (user_id, weight, date) VALUES (?, ?, ?)",
-            (message.from_user.id, weight, datetime.datetime.now().strftime('%Y-%m-%d'))
+            (message.from_user.id, weight, current_date)
         )
 
         await message.answer(f"Вес {weight} кг успешно записан! 📝", reply_markup=tracking_keyboard)
@@ -1248,10 +1427,21 @@ async def process_recipe_callback(callback_query: types.CallbackQuery):
 async def process_record_meal_callback(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
     await state.set_state(UserStates.WAITING_FOR_MEAL)
+    
+    # Создаем текст с инструкциями и списком доступных продуктов
+    products_text = "Доступные продукты и их калорийность (на 100г):\n"
+    for food, calories in FOOD_CALORIES.items():
+        products_text += f"• {food}: {calories} ккал\n"
+    
+    instructions = (
+        "Введите информацию о приёме пищи в одном из форматов:\n"
+        "1. [продукт] [граммы] (например: яблоко 100)\n"
+        "2. [тип_приема_пищи] - [калории] (например: завтрак - 500)\n\n"
+        f"{products_text}"
+    )
+    
     await callback_query.message.edit_text(
-        "Введите информацию о приёме пищи в формате:\n"
-        "Тип приёма пищи (завтрак/обед/ужин/перекус) - калории\n"
-        "Например: завтрак - 500",
+        instructions,
         reply_markup=cancel_keyboard
     )
 
@@ -1443,23 +1633,342 @@ async def process_next_exercise(callback_query: types.CallbackQuery):
             reply_markup=muscle_groups_keyboard
         )
 
+@dp.callback_query(lambda c: c.data == "manage_reminders")
+async def process_manage_reminders_callback(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    try:
+        # Получаем текущие напоминания пользователя
+        reminders = await execute_db_query(
+            "SELECT id, reminder_type, reminder_time, days FROM reminders WHERE user_id = ? AND is_active = TRUE",
+            (callback_query.from_user.id,),
+            fetch=True
+        )
+        
+        text = "⏰ Управление напоминаниями\n\n"
+        
+        if reminders:
+            text += "Ваши текущие напоминания:\n"
+            for r in reminders:
+                reminder_id, r_type, r_time, days = r
+                type_emoji = "🏋️" if r_type == "workout" else "🍽"
+                days_text = days.replace(",", ", ")
+                text += f"{type_emoji} {r_type.capitalize()}: {r_time} ({days_text})\n"
+        else:
+            text += "У вас пока нет активных напоминаний.\n"
+        
+        reminder_management_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="add_reminder")],
+            [InlineKeyboardButton(text="➖ Удалить напоминание", callback_data="delete_reminder")] if reminders else [],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tracking")]
+        ])
+        
+        await callback_query.message.edit_text(text, reply_markup=reminder_management_keyboard)
+        
+    except Exception as e:
+        logger.error(f"Error in manage reminders: {e}")
+        await callback_query.message.answer(
+            "Произошла ошибка при управлении напоминаниями. Попробуйте позже.",
+            reply_markup=tracking_keyboard
+        )
+
+@dp.callback_query(lambda c: c.data == "add_reminder")
+async def process_add_reminder_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await state.set_state(UserStates.WAITING_FOR_REMINDER_TYPE)
+    await callback_query.message.edit_text(
+        "Выберите тип напоминания:",
+        reply_markup=reminder_type_keyboard
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("reminder_"))
+async def process_reminder_type_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    reminder_type = callback_query.data.replace("reminder_", "")
+    await state.update_data(reminder_type=reminder_type)
+    await state.set_state(UserStates.WAITING_FOR_REMINDER_TIME)
+    
+    time_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="07:00", callback_data="time_07:00"),
+            InlineKeyboardButton(text="08:00", callback_data="time_08:00"),
+            InlineKeyboardButton(text="09:00", callback_data="time_09:00")
+        ],
+        [
+            InlineKeyboardButton(text="12:00", callback_data="time_12:00"),
+            InlineKeyboardButton(text="13:00", callback_data="time_13:00"),
+            InlineKeyboardButton(text="14:00", callback_data="time_14:00")
+        ],
+        [
+            InlineKeyboardButton(text="18:00", callback_data="time_18:00"),
+            InlineKeyboardButton(text="19:00", callback_data="time_19:00"),
+            InlineKeyboardButton(text="20:00", callback_data="time_20:00")
+        ],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+    ])
+    
+    await callback_query.message.edit_text(
+        "Выберите время для напоминания:",
+        reply_markup=time_keyboard
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("time_"))
+async def process_reminder_time_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    reminder_time = callback_query.data.replace("time_", "")
+    await state.update_data(reminder_time=reminder_time)
+    await state.set_state(UserStates.WAITING_FOR_REMINDER_DAYS)
+    
+    days_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Пн", callback_data="days_mon"),
+            InlineKeyboardButton(text="Вт", callback_data="days_tue"),
+            InlineKeyboardButton(text="Ср", callback_data="days_wed")
+        ],
+        [
+            InlineKeyboardButton(text="Чт", callback_data="days_thu"),
+            InlineKeyboardButton(text="Пт", callback_data="days_fri"),
+            InlineKeyboardButton(text="Сб", callback_data="days_sat")
+        ],
+        [
+            InlineKeyboardButton(text="Вс", callback_data="days_sun"),
+            InlineKeyboardButton(text="Все дни", callback_data="days_all")
+        ],
+        [InlineKeyboardButton(text="✅ Готово", callback_data="days_done")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+    ])
+    
+    await callback_query.message.edit_text(
+        "Выберите дни для напоминания (можно выбрать несколько):",
+        reply_markup=days_keyboard
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("days_"))
+async def process_reminder_days_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    
+    if callback_query.data == "days_done":
+        user_data = await state.get_data()
+        if "selected_days" not in user_data or not user_data["selected_days"]:
+            await callback_query.message.edit_text(
+                "Пожалуйста, выберите хотя бы один день для напоминания.",
+                reply_markup=callback_query.message.reply_markup
+            )
+            return
+            
+        # Сохраняем напоминание в базу данных
+        reminder_type = user_data["reminder_type"]
+        reminder_time = user_data["reminder_time"]
+        days = ",".join(user_data["selected_days"])
+        
+        await execute_db_query(
+            """INSERT INTO reminders (user_id, reminder_type, reminder_time, days) 
+               VALUES (?, ?, ?, ?)""",
+            (callback_query.from_user.id, reminder_type, reminder_time, days)
+        )
+        
+        await state.clear()
+        await callback_query.message.edit_text(
+            "✅ Напоминание успешно установлено!",
+            reply_markup=tracking_keyboard
+        )
+        return
+        
+    if callback_query.data == "days_all":
+        all_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        await state.update_data(selected_days=all_days)
+        await callback_query.message.edit_text(
+            "Выбраны все дни недели. Нажмите '✅ Готово' для сохранения.",
+            reply_markup=callback_query.message.reply_markup
+        )
+        return
+        
+    day = callback_query.data.replace("days_", "")
+    day_map = {
+        "mon": "Пн", "tue": "Вт", "wed": "Ср",
+        "thu": "Чт", "fri": "Пт", "sat": "Сб", "sun": "Вс"
+    }
+    
+    if day in day_map:
+        user_data = await state.get_data()
+        selected_days = user_data.get("selected_days", [])
+        day_name = day_map[day]
+        
+        if day_name not in selected_days:
+            selected_days.append(day_name)
+        else:
+            selected_days.remove(day_name)
+            
+        await state.update_data(selected_days=selected_days)
+        
+        days_text = ", ".join(selected_days) if selected_days else "Не выбрано"
+        await callback_query.message.edit_text(
+            f"Выбранные дни: {days_text}\n\nВыберите дни для напоминания (можно выбрать несколько):",
+            reply_markup=callback_query.message.reply_markup
+        )
+
+@dp.callback_query(lambda c: c.data == "delete_reminder")
+async def process_delete_reminder_callback(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    try:
+        reminders = await execute_db_query(
+            "SELECT id, reminder_type, reminder_time, days FROM reminders WHERE user_id = ? AND is_active = TRUE",
+            (callback_query.from_user.id,),
+            fetch=True
+        )
+        
+        if not reminders:
+            await callback_query.message.edit_text(
+                "У вас нет активных напоминаний.",
+                reply_markup=tracking_keyboard
+            )
+            return
+            
+        keyboard = []
+        for reminder in reminders:
+            reminder_id, r_type, r_time, days = reminder
+            type_emoji = "🏋️" if r_type == "workout" else "🍽"
+            days_text = days.replace(",", ", ")
+            text = f"{type_emoji} {r_type.capitalize()}: {r_time} ({days_text})"
+            keyboard.append([InlineKeyboardButton(
+                text=f"❌ {text}",
+                callback_data=f"del_reminder_{reminder_id}"
+            )])
+            
+        keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="manage_reminders")])
+        delete_keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
+        await callback_query.message.edit_text(
+            "Выберите напоминание для удаления:",
+            reply_markup=delete_keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in delete reminder: {e}")
+        await callback_query.message.answer(
+            "Произошла ошибка при удалении напоминания. Попробуйте позже.",
+            reply_markup=tracking_keyboard
+        )
+
+@dp.callback_query(lambda c: c.data.startswith("del_reminder_"))
+async def process_delete_specific_reminder_callback(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    try:
+        reminder_id = int(callback_query.data.replace("del_reminder_", ""))
+        await execute_db_query(
+            "UPDATE reminders SET is_active = FALSE WHERE id = ? AND user_id = ?",
+            (reminder_id, callback_query.from_user.id)
+        )
+        
+        await callback_query.message.edit_text(
+            "✅ Напоминание успешно удалено!",
+            reply_markup=tracking_keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in delete specific reminder: {e}")
+        await callback_query.message.answer(
+            "Произошла ошибка при удалении напоминания. Попробуйте позже.",
+            reply_markup=tracking_keyboard
+        )
+
+@dp.callback_query(lambda c: c.data == "back_to_tracking")
+async def process_back_to_tracking_callback(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    await callback_query.message.edit_text(
+        "Меню отслеживания прогресса:",
+        reply_markup=tracking_keyboard
+    )
+
+async def send_reminder(user_id: int, reminder_type: str):
+    try:
+        messages = {
+            "workout": [
+                "🏋️ Время тренировки! Готовы покорять новые вершины?",
+                "💪 Пора размяться и зарядиться энергией!",
+                "🎯 Ваша тренировка ждет вас. Вперед к целям!",
+                "⚡️ Время становиться сильнее! Тренировка начинается.",
+                "🔥 Готовы к продуктивной тренировке?"
+            ],
+            "meal": [
+                "🍽 Время приема пищи! Не забудьте про правильное питание.",
+                "🥗 Пора подкрепиться! Помните о балансе в питании.",
+                "⏰ Время перекусить! Выбирайте полезные продукты.",
+                "🍳 Не пропускайте прием пищи - это важно для здоровья!",
+                "🥑 Время для здорового питания!"
+            ]
+        }
+        
+        message = random.choice(messages[reminder_type])
+        await bot.send_message(user_id, message)
+        
+    except Exception as e:
+        logger.error(f"Error sending reminder to user {user_id}: {e}")
+
+async def check_reminders():
+    while True:
+        try:
+            current_time = datetime.now()
+            current_weekday = current_time.strftime("%a").lower()
+            time_str = current_time.strftime("%H:%M")
+            
+            # Получаем все активные напоминания для текущего времени
+            reminders = await execute_db_query(
+                """SELECT user_id, reminder_type FROM reminders 
+                   WHERE reminder_time = ? AND is_active = TRUE""",
+                (time_str,),
+                fetch=True
+            )
+            
+            if reminders:
+                for reminder in reminders:
+                    user_id, reminder_type = reminder
+                    await send_reminder(user_id, reminder_type)
+            
+            # Ждем до следующей минуты
+            next_minute = (current_time + timedelta(minutes=1)).replace(second=0, microsecond=0)
+            await asyncio.sleep((next_minute - current_time).total_seconds())
+            
+        except Exception as e:
+            logger.error(f"Error in check_reminders: {e}")
+            await asyncio.sleep(60)
+
 async def main():
     try:
+        global bot
         logger.info("Starting bot...")
-        await init_db()
         
+        # Создаем сессию с базовыми настройками
+        session = AiohttpSession()
+        
+        # Инициализируем бота с созданной сессией
+        bot = Bot(token=TOKEN, session=session)
+        
+        await init_db()
         await bot.delete_webhook(drop_pending_updates=True)
         
-        await dp.start_polling(
-            bot,
-            allowed_updates=dp.resolve_used_update_types(),
-            close_bot_session=True
-        )
+        # Запускаем проверку напоминаний в фоновом режиме
+        asyncio.create_task(check_reminders())
+        
+        # Добавляем обработку ошибок при получении обновлений
+        while True:
+            try:
+                await dp.start_polling(
+                    bot,
+                    allowed_updates=dp.resolve_used_update_types(),
+                    close_bot_session=True
+                )
+            except Exception as e:
+                logger.error(f"Polling error: {e}")
+                # Ждем 5 секунд перед повторной попыткой
+                await asyncio.sleep(5)
+                continue
+                
     except Exception as e:
         logger.error(f"Critical error: {e}")
         sys.exit(1)
     finally:
         logger.info("Bot stopped")
+        await bot.session.close()
 
 if __name__ == "__main__":
     try:
