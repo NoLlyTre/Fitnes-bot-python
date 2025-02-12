@@ -51,7 +51,7 @@
 
 1. Клонируйте репозиторий:
 ```bash
-git clone https://github.com/your-username/BodyIsFine.git
+git clone https://github.com/NoLlyTre/BodyIsFine.git
 cd BodyIsFine
 ```
 
@@ -114,7 +114,7 @@ MIT License
 
 ## Автор 👤
 
-Ваше имя
+NoLlytre
 
 ## Поддержка 🤝
 
