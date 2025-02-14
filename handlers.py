@@ -118,16 +118,184 @@ async def back_to_main_menu(callback: types.CallbackQuery):
     
     await callback.answer()
 
-# Обработчики тренировок
+# Обработчики тренировок и напоминаний о тренировках
+async def process_workout_reminder(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик настройки напоминаний о тренировках"""
+    await callback.message.edit_text(
+        "⏰ Во сколько вы обычно тренируетесь?\n"
+        "Укажите время в формате ЧЧ:ММ (например, 18:30):"
+    )
+    await state.set_state(UserStates.setting_workout_time)
+    await callback.answer()
+
+async def save_workout_time(message: types.Message, state: FSMContext):
+    """Сохранение времени тренировок"""
+    try:
+        # Проверка формата времени
+        time_str = message.text
+        hour, minute = map(int, time_str.split(':'))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+        
+        await state.update_data(workout_time=time_str)
+        
+        # Создаем клавиатуру для выбора дней
+        builder = InlineKeyboardBuilder()
+        days = {
+            "monday": "Понедельник",
+            "tuesday": "Вторник",
+            "wednesday": "Среда",
+            "thursday": "Четверг",
+            "friday": "Пятница",
+            "saturday": "Суббота",
+            "sunday": "Воскресенье"
+        }
+        
+        for day_key, day_name in days.items():
+            builder.add(InlineKeyboardButton(
+                text=f"☐ {day_name}",
+                callback_data=f"day_{day_key}"
+            ))
+        
+        builder.add(InlineKeyboardButton(
+            text="✅ Подтвердить выбор",
+            callback_data="confirm_days"
+        ))
+        
+        builder.adjust(1)  # Размещаем кнопки в один столбец
+        
+        await message.answer(
+            "Выберите дни недели для тренировок:\n"
+            "(Нажмите на день, чтобы выбрать/отменить выбор)",
+            reply_markup=builder.as_markup()
+        )
+        await state.set_state(UserStates.setting_workout_days)
+    except (ValueError, IndexError):
+        await message.answer("Пожалуйста, укажите время в правильном формате (ЧЧ:ММ)")
+
+async def process_day_selection(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора дней недели"""
+    try:
+        day = callback.data.split('_')[1]
+        current_text = callback.message.reply_markup.inline_keyboard
+        
+        days_mapping = {
+            "monday": ("Понедельник", 1),
+            "tuesday": ("Вторник", 2),
+            "wednesday": ("Среда", 3),
+            "thursday": ("Четверг", 4),
+            "friday": ("Пятница", 5),
+            "saturday": ("Суббота", 6),
+            "sunday": ("Воскресенье", 7)
+        }
+        
+        if day not in days_mapping:
+            logging.error(f"Неверный день недели в callback_data: {day}")
+            await callback.answer("Произошла ошибка. Попробуйте еще раз.")
+            return
+        
+        builder = InlineKeyboardBuilder()
+        
+        # Обновляем состояние кнопок
+        for row in current_text[:-1]:  # Исключаем кнопку подтверждения
+            button = row[0]
+            day_key = button.callback_data.split('_')[1]
+            
+            if day_key not in days_mapping:
+                continue
+                
+            day_name = days_mapping[day_key][0]
+            
+            if day_key == day:
+                # Меняем состояние нажатой кнопки
+                is_selected = "☑" in button.text
+                new_text = f"☐ {day_name}" if is_selected else f"☑ {day_name}"
+            else:
+                new_text = button.text
+            
+            builder.add(InlineKeyboardButton(
+                text=new_text,
+                callback_data=f"day_{day_key}"
+            ))
+        
+        # Добавляем кнопку подтверждения
+        builder.add(InlineKeyboardButton(
+            text="Подтвердить выбор",
+            callback_data="confirm_days"
+        ))
+        
+        builder.adjust(1)
+        
+        await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+        
+    except Exception as e:
+        logging.error(f"Ошибка в process_day_selection: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте еще раз.")
+    
+    await callback.answer()
+
+async def confirm_days_selection(callback: types.CallbackQuery, state: FSMContext):
+    """Подтверждение выбора дней"""
+    selected_days = []
+    days_mapping = {
+        "monday": 1,
+        "tuesday": 2,
+        "wednesday": 3,
+        "thursday": 4,
+        "friday": 5,
+        "saturday": 6,
+        "sunday": 7
+    }
+    
+    # Собираем выбранные дни
+    for row in callback.message.reply_markup.inline_keyboard[:-1]:  # Исключаем кнопку подтверждения
+        button = row[0]
+        if "☑" in button.text:
+            day_key = button.callback_data.split('_')[1]
+            selected_days.append(str(days_mapping[day_key]))
+    
+    if not selected_days:
+        await callback.answer("Выберите хотя бы один день!", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    workout_time = data.get('workout_time')
+    days_str = ','.join(selected_days)
+    
+    # Сохраняем в базу данных
+    await db.save_workout_reminder(callback.from_user.id, workout_time, days_str)
+    
+    # Преобразуем номера дней в названия для отображения
+    day_names = {
+        "1": "Пн",
+        "2": "Вт",
+        "3": "Ср",
+        "4": "Чт",
+        "5": "Пт",
+        "6": "Сб",
+        "7": "Вс"
+    }
+    selected_day_names = [day_names[day] for day in selected_days]
+    
+    await state.clear()
+    await callback.message.edit_text(
+        f"✅ Напоминания о тренировках настроены!\n"
+        f"Время: {workout_time}\n"
+        f"Дни: {', '.join(selected_day_names)}\n\n"
+        "Выберите действие:",
+        reply_markup=get_reminders_keyboard()
+    )
+    await callback.answer()
+
 async def process_workout_selection(callback: types.CallbackQuery):
     """Обработчик выбора типа тренировки"""
-    # Проверяем, не является ли это напоминанием
-    if callback.data == "workout_reminders":
-        return
-        
     workout_type = callback.data  # Используем полный callback_data
-    user_id = callback.from_user.id
     
+    # Если это напоминание о тренировках, пропускаем создание сессии
+    if workout_type == "workout_reminders":
+        return
+    
+    user_id = callback.from_user.id
     session = WorkoutSession()
     first_exercise = session.start_workout(workout_type)
     active_sessions[user_id] = session
@@ -328,25 +496,39 @@ async def save_thighs(message: types.Message, state: FSMContext):
     )
 
 async def process_show_statistics(callback: types.CallbackQuery):
-    """Показ общей статистики"""
-    stats = await db.get_user_statistics(callback.from_user.id)
-    if stats:
-        total_workouts, total_duration, total_calories, total_exercises = stats
-        await callback.message.edit_text(
-            f"📊 Ваша общая статистика:\n\n"
-            f"🏋️‍♂️ Всего тренировок: {total_workouts}\n"
-            f"⏱ Общая длительность: {total_duration} минут\n"
-            f"🔥 Всего сожжено калорий: {total_calories}\n"
-            f"💪 Всего выполнено упражнений: {total_exercises}\n\n"
-            "Выберите действие:",
+    """Показ общей статистики тренировок"""
+    try:
+        stats = await db.get_user_statistics(callback.from_user.id)
+        
+        if not stats or not any(stats):
+            # Если статистики нет или все значения нулевые
+            await callback.message.answer(
+                "У вас пока нет завершенных тренировок.\n\n"
+                "Выберите действие:",
+                reply_markup=get_progress_keyboard()
+            )
+            await callback.message.delete()
+        else:
+            total_workouts, total_duration, total_calories, total_exercises = stats
+            
+            # Отправляем новое сообщение
+            await callback.message.answer(
+                f"📊 Ваша общая статистика:\n\n"
+                f"🏋️‍♂️ Всего тренировок: {total_workouts}\n"
+                f"⏱ Общая длительность: {total_duration} минут\n"
+                f"🔥 Всего сожжено калорий: {total_calories}\n"
+                f"💪 Всего выполнено упражнений: {total_exercises}\n\n"
+                "Выберите действие:",
+                reply_markup=get_progress_keyboard()
+            )
+            await callback.message.delete()
+    except Exception as e:
+        logging.error(f"Ошибка при показе статистики: {e}")
+        await callback.message.answer(
+            "Произошла ошибка при загрузке статистики. Попробуйте позже.",
             reply_markup=get_progress_keyboard()
         )
-    else:
-        await callback.message.edit_text(
-            "У вас пока нет завершенных тренировок\n\n"
-            "Выберите действие:",
-            reply_markup=get_progress_keyboard()
-        )
+    
     await callback.answer()
 
 async def process_show_progress(callback: types.CallbackQuery):
@@ -396,179 +578,7 @@ async def show_health_tip(message: types.Message):
     tip = random.choice(HEALTH_TIPS)
     await message.answer(f"💡 Совет дня:\n\n{tip}", reply_markup=get_main_keyboard())
 
-# Обработчики напоминаний
-async def process_workout_reminder(callback: types.CallbackQuery, state: FSMContext):
-    """Обработчик настройки напоминаний о тренировках"""
-    await callback.message.edit_text(
-        "⏰ Во сколько вы обычно тренируетесь?\n"
-        "Укажите время в формате ЧЧ:ММ (например, 18:30):"
-    )
-    await state.set_state(UserStates.setting_workout_time)
-    await callback.answer()
-
-async def save_workout_time(message: types.Message, state: FSMContext):
-    """Сохранение времени тренировок"""
-    try:
-        # Проверка формата времени
-        time_str = message.text
-        hour, minute = map(int, time_str.split(':'))
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError
-        
-        await state.update_data(workout_time=time_str)
-        
-        # Создаем клавиатуру для выбора дней
-        builder = InlineKeyboardBuilder()
-        days = {
-            "monday": "Понедельник",
-            "tuesday": "Вторник",
-            "wednesday": "Среда",
-            "thursday": "Четверг",
-            "friday": "Пятница",
-            "saturday": "Суббота",
-            "sunday": "Воскресенье"
-        }
-        
-        for day_key, day_name in days.items():
-            builder.add(InlineKeyboardButton(
-                text=f"☐ {day_name}",
-                callback_data=f"day_{day_key}"
-            ))
-        
-        builder.add(InlineKeyboardButton(
-            text="✅ Подтвердить выбор",
-            callback_data="confirm_days"
-        ))
-        
-        builder.adjust(1)  # Размещаем кнопки в один столбец
-        
-        await message.answer(
-            "Выберите дни недели для тренировок:\n"
-            "(Нажмите на день, чтобы выбрать/отменить выбор)",
-            reply_markup=builder.as_markup()
-        )
-        await state.set_state(UserStates.setting_workout_days)
-    except (ValueError, IndexError):
-        await message.answer("Пожалуйста, укажите время в правильном формате (ЧЧ:ММ)")
-
-async def process_day_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора дней недели"""
-    try:
-        # Проверяем, что это callback для выбора дня недели, а не статистики
-        if not callback.data.startswith("day_") or callback.data == "day_stats":
-            return
-            
-        day = callback.data.split('_')[1]
-        current_text = callback.message.reply_markup.inline_keyboard
-        
-        days_mapping = {
-            "monday": ("Понедельник", 1),
-            "tuesday": ("Вторник", 2),
-            "wednesday": ("Среда", 3),
-            "thursday": ("Четверг", 4),
-            "friday": ("Пятница", 5),
-            "saturday": ("Суббота", 6),
-            "sunday": ("Воскресенье", 7)
-        }
-        
-        if day not in days_mapping:
-            logging.error(f"Неверный день недели в callback_data: {day}")
-            await callback.answer("Произошла ошибка. Попробуйте еще раз.")
-            return
-        
-        builder = InlineKeyboardBuilder()
-        
-        # Обновляем состояние кнопок
-        for row in current_text[:-1]:  # Исключаем кнопку подтверждения
-            button = row[0]
-            day_key = button.callback_data.split('_')[1]
-            
-            if day_key not in days_mapping:
-                continue
-                
-            day_name = days_mapping[day_key][0]
-            
-            if day_key == day:
-                # Меняем состояние нажатой кнопки
-                is_selected = "☑" in button.text
-                new_text = f"☐ {day_name}" if is_selected else f"☑ {day_name}"
-            else:
-                new_text = button.text
-            
-            builder.add(InlineKeyboardButton(
-                text=new_text,
-                callback_data=f"day_{day_key}"
-            ))
-        
-        # Добавляем кнопку подтверждения
-        builder.add(InlineKeyboardButton(
-            text="✅ Подтвердить выбор",
-            callback_data="confirm_days"
-        ))
-        
-        builder.adjust(1)
-        
-        await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
-        
-    except Exception as e:
-        logging.error(f"Ошибка в process_day_selection: {e}")
-        await callback.answer("Произошла ошибка. Попробуйте еще раз.")
-    
-    await callback.answer()
-
-async def confirm_days_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Подтверждение выбора дней"""
-    selected_days = []
-    days_mapping = {
-        "monday": 1,
-        "tuesday": 2,
-        "wednesday": 3,
-        "thursday": 4,
-        "friday": 5,
-        "saturday": 6,
-        "sunday": 7
-    }
-    
-    # Собираем выбранные дни
-    for row in callback.message.reply_markup.inline_keyboard[:-1]:  # Исключаем кнопку подтверждения
-        button = row[0]
-        if "☑" in button.text:
-            day_key = button.callback_data.split('_')[1]
-            selected_days.append(str(days_mapping[day_key]))
-    
-    if not selected_days:
-        await callback.answer("Выберите хотя бы один день!", show_alert=True)
-        return
-    
-    data = await state.get_data()
-    workout_time = data.get('workout_time')
-    days_str = ','.join(selected_days)
-    
-    # Сохраняем в базу данных
-    await db.save_workout_reminder(callback.from_user.id, workout_time, days_str)
-    
-    # Преобразуем номера дней в названия для отображения
-    day_names = {
-        "1": "Пн",
-        "2": "Вт",
-        "3": "Ср",
-        "4": "Чт",
-        "5": "Пт",
-        "6": "Сб",
-        "7": "Вс"
-    }
-    selected_day_names = [day_names[day] for day in selected_days]
-    
-    await state.clear()
-    await callback.message.edit_text(
-        f"✅ Напоминания о тренировках настроены!\n"
-        f"Время: {workout_time}\n"
-        f"Дни: {', '.join(selected_day_names)}\n\n"
-        "Выберите действие:",
-        reply_markup=get_reminders_keyboard()
-    )
-    await callback.answer()
-
+# Обработчики напоминаний о питании
 async def process_meal_reminder(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик настройки напоминаний о питании"""
     await callback.message.edit_text(
@@ -962,14 +972,13 @@ async def save_gender(callback: types.CallbackQuery, state: FSMContext):
     
     for key, value in activities.items():
         builder.add(InlineKeyboardButton(text=value, callback_data=f"activity_{key}"))
-    
-    builder.adjust(1)
-    
-    await state.set_state(UserStates.waiting_for_activity)
-    await callback.message.edit_text(
-        "Выберите ваш уровень физической активности:",
-        reply_markup=builder.as_markup()
-    )
+        builder.adjust(1)
+        
+        await state.set_state(UserStates.waiting_for_activity)
+        await callback.message.edit_text(
+            "Выберите ваш уровень физической активности:",
+            reply_markup=builder.as_markup()
+        )
 
 async def calculate_calories(callback: types.CallbackQuery, state: FSMContext):
     """Расчет калорий"""
@@ -1018,14 +1027,14 @@ async def calculate_calories(callback: types.CallbackQuery, state: FSMContext):
 async def process_nutrition_diary(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик дневника питания"""
     builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="📝 Записать прием пищи", callback_data="add_meal"))
-    builder.add(InlineKeyboardButton(text="📊 Статистика за день", callback_data="day_stats"))
-    builder.add(InlineKeyboardButton(text="↩️ Назад", callback_data="menu_nutrition"))
+    builder.add(InlineKeyboardButton(text="Записать прием пищи", callback_data="add_meal"))
+    builder.add(InlineKeyboardButton(text="Статистика за день", callback_data="show_day_stats"))
+    builder.add(InlineKeyboardButton(text="Назад", callback_data="menu_nutrition"))
     builder.adjust(1)
     
     try:
         await callback.message.answer(
-            "📝 Дневник питания\n\n"
+            "Дневник питания\n\n"
             "Выберите действие:",
             reply_markup=builder.as_markup()
         )
@@ -1046,6 +1055,7 @@ async def start_add_meal(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "Введите название продукта или блюда:"
     )
+    await callback.answer()
 
 async def save_meal_name(message: types.Message, state: FSMContext):
     """Сохранение названия продукта"""
@@ -1119,16 +1129,15 @@ async def save_meal_carbs(message: types.Message, state: FSMContext):
             await db.commit()
         
         builder = InlineKeyboardBuilder()
-        builder.add(InlineKeyboardButton(text="📝 Записать еще", callback_data="add_meal"))
-        builder.add(InlineKeyboardButton(text="📊 Статистика за день", callback_data="day_stats"))
-        builder.add(InlineKeyboardButton(text="↩️ В меню питания", callback_data="menu_nutrition"))
+        builder.add(InlineKeyboardButton(text="Записать еще", callback_data="add_meal"))
+        builder.add(InlineKeyboardButton(text="В меню питания", callback_data="menu_nutrition"))
         builder.adjust(1)
         
         await message.answer(
-            f"✅ Запись добавлена в дневник питания!\n\n"
-            f"🕐 Время: {current_time}\n"
-            f"🍽 Продукт: {data['meal_name']}\n"
-            f"📊 Нутриенты:\n"
+            f"Запись добавлена в дневник питания!\n\n"
+            f"Время: {current_time}\n"
+            f"Продукт: {data['meal_name']}\n"
+            f"Нутриенты:\n"
             f"• Калории: {data['calories']} ккал\n"
             f"• Белки: {data['proteins']} г\n"
             f"• Жиры: {data['fats']} г\n"
@@ -1141,40 +1150,107 @@ async def save_meal_carbs(message: types.Message, state: FSMContext):
         await message.answer("Пожалуйста, введите корректное числовое значение")
 
 async def show_day_stats(callback: types.CallbackQuery):
-    """Показ статистики за день"""
-    logging.info(f"Начало выполнения show_day_stats для пользователя {callback.from_user.id}")
+    """Показ статистики питания за день"""
     try:
         async with aiosqlite.connect('fitness_bot.db') as db:
-            logging.info("Подключение к БД установлено")
-            
-            # Получаем последнюю запись о весе пользователя
-            logging.info("Запрос веса пользователя из БД")
-            async with db.execute("""
-                SELECT weight FROM weight_records 
-                WHERE user_id = ? 
-                ORDER BY recorded_at DESC LIMIT 1
-            """, (callback.from_user.id,)) as cursor:
-                weight_record = await cursor.fetchone()
-                logging.info(f"Получена запись о весе: {weight_record}")
-
-            # Получаем сумму всех нутриентов за сегодня
-            logging.info("Запрос статистики питания за день")
-            async with db.execute("""
+            # Получаем статистику за день одним запросом
+            query = """
+                WITH daily_stats AS (
+                    SELECT 
+                        COALESCE(SUM(calories), 0) as total_calories,
+                        COALESCE(SUM(proteins), 0) as total_proteins,
+                        COALESCE(SUM(fats), 0) as total_fats,
+                        COALESCE(SUM(carbs), 0) as total_carbs,
+                        COUNT(*) as meals_count
+                    FROM meal_diary
+                    WHERE user_id = ? 
+                    AND date(recorded_at) = date('now', 'localtime')
+                ),
+                user_weight AS (
+                    SELECT weight
+                    FROM weight_records
+                    WHERE user_id = ?
+                    ORDER BY recorded_at DESC
+                    LIMIT 1
+                )
                 SELECT 
-                    SUM(calories) as total_calories,
-                    SUM(proteins) as total_proteins,
-                    SUM(fats) as total_fats,
-                    SUM(carbs) as total_carbs,
-                    COUNT(*) as meals_count
-                FROM meal_diary
-                WHERE user_id = ? 
-                AND date(recorded_at) = date('now', 'localtime')
-            """, (callback.from_user.id,)) as cursor:
+                    d.total_calories, d.total_proteins, d.total_fats, 
+                    d.total_carbs, d.meals_count, w.weight
+                FROM daily_stats d
+                LEFT JOIN user_weight w ON 1=1
+            """
+            async with db.execute(query, (callback.from_user.id, callback.from_user.id)) as cursor:
                 stats = await cursor.fetchone()
-                logging.info(f"Получена статистика: {stats}")
-            
-            # Получаем все приемы пищи за сегодня
-            logging.info("Запрос списка приемов пищи")
+
+            if not stats or stats[4] == 0:  # Если нет записей или meals_count == 0
+                builder = InlineKeyboardBuilder()
+                builder.add(InlineKeyboardButton(text="Записать прием пищи", callback_data="add_meal"))
+                builder.add(InlineKeyboardButton(text="Назад", callback_data="menu_nutrition"))
+                builder.adjust(1)
+                
+                await callback.message.edit_text(
+                    "За сегодня еще нет записей в дневнике питания.",
+                    reply_markup=builder.as_markup()
+                )
+                return
+
+            total_calories, total_proteins, total_fats, total_carbs, meals_count, weight = stats
+
+            # Формируем основную статистику
+            text_parts = [
+                "Статистика питания за сегодня\n",
+                f"\nВсего приемов пищи: {meals_count}\n",
+                "\nОбщие показатели:"
+            ]
+
+            # Если есть вес, добавляем расчет норм и рекомендации
+            if weight:
+                # Расчет рекомендуемых норм
+                norms = {
+                    'calories': weight * 30,
+                    'proteins': weight * 2,
+                    'fats': weight * 1,
+                    'carbs': weight * 3
+                }
+
+                # Расчет процентов от нормы
+                percentages = {
+                    'calories': (total_calories / norms['calories'] * 100) if norms['calories'] > 0 else 0,
+                    'proteins': (total_proteins / norms['proteins'] * 100) if norms['proteins'] > 0 else 0,
+                    'fats': (total_fats / norms['fats'] * 100) if norms['fats'] > 0 else 0,
+                    'carbs': (total_carbs / norms['carbs'] * 100) if norms['carbs'] > 0 else 0
+                }
+
+                text_parts.extend([
+                    f"\n• Калории: {total_calories:.1f} ккал ({percentages['calories']:.1f}% от нормы)",
+                    f"• Белки: {total_proteins:.1f} г ({percentages['proteins']:.1f}% от нормы)",
+                    f"• Жиры: {total_fats:.1f} г ({percentages['fats']:.1f}% от нормы)",
+                    f"• Углеводы: {total_carbs:.1f} г ({percentages['carbs']:.1f}% от нормы)"
+                ])
+
+                # Формируем рекомендации
+                recommendations = []
+                if percentages['calories'] < 70:
+                    recommendations.append("Калорий меньше нормы. Рекомендуется увеличить прием пищи")
+                elif percentages['calories'] > 130:
+                    recommendations.append("Превышение калорий. Рекомендуется уменьшить порции")
+                if percentages['proteins'] < 70:
+                    recommendations.append("Недостаточно белка. Добавьте мясо, рыбу или молочные продукты")
+
+                if recommendations:
+                    text_parts.append("\nРекомендации:")
+                    text_parts.extend(recommendations)
+            else:
+                # Статистика без учета норм
+                text_parts.extend([
+                    f"\n• Калории: {total_calories:.1f} ккал",
+                    f"• Белки: {total_proteins:.1f} г",
+                    f"• Жиры: {total_fats:.1f} г",
+                    f"• Углеводы: {total_carbs:.1f} г",
+                    "\nЗапишите свой вес в разделе прогресса для расчета персональных норм"
+                ])
+
+            # Получаем детали приемов пищи
             async with db.execute("""
                 SELECT meal_name, calories, proteins, fats, carbs, time(recorded_at)
                 FROM meal_diary
@@ -1183,108 +1259,37 @@ async def show_day_stats(callback: types.CallbackQuery):
                 ORDER BY recorded_at
             """, (callback.from_user.id,)) as cursor:
                 meals = await cursor.fetchall()
-                logging.info(f"Получено приемов пищи: {len(meals)}")
-        
-        if not stats[0]:  # Если нет записей за сегодня
-            logging.info("Нет записей за сегодня")
+
+            if meals:
+                text_parts.append("\nПриемы пищи:")
+                for name, cals, prots, fats, carbs, time in meals:
+                    time = time.split('.')[0]
+                    text_parts.extend([
+                        f"\nВремя: {time}",
+                        f"Продукт: {name}",
+                        f"• Калории: {cals:.1f} ккал",
+                        f"• Б/Ж/У: {prots:.1f}/{fats:.1f}/{carbs:.1f} г"
+                    ])
+
             builder = InlineKeyboardBuilder()
-            builder.add(InlineKeyboardButton(text="📝 Записать прием пищи", callback_data="add_meal"))
-            builder.add(InlineKeyboardButton(text="↩️ Назад", callback_data="menu_nutrition"))
+            builder.add(InlineKeyboardButton(text="Записать прием пищи", callback_data="add_meal"))
+            builder.add(InlineKeyboardButton(text="Назад", callback_data="menu_nutrition"))
             builder.adjust(1)
-            
+
             await callback.message.edit_text(
-                "За сегодня еще нет записей в дневнике питания.",
+                "\n".join(text_parts),
                 reply_markup=builder.as_markup()
             )
-            return
-        
-        total_calories, total_proteins, total_fats, total_carbs, meals_count = stats
-        logging.info(f"Обработка статистики: калории={total_calories}, белки={total_proteins}, жиры={total_fats}, углеводы={total_carbs}, приемов пищи={meals_count}")
-        
-        # Расчет рекомендуемых норм на основе веса (если есть)
-        if weight_record:
-            logging.info("Расчет норм на основе веса")
-            weight = weight_record[0]
-            recommended_calories = weight * 30
-            recommended_proteins = weight * 2
-            recommended_fats = weight * 1
-            recommended_carbs = weight * 3
-            
-            calories_percent = round((total_calories / recommended_calories) * 100, 1)
-            proteins_percent = round((total_proteins / recommended_proteins) * 100, 1)
-            fats_percent = round((total_fats / recommended_fats) * 100, 1)
-            carbs_percent = round((total_carbs / recommended_carbs) * 100, 1)
-            
-            logging.info(f"Проценты от нормы: калории={calories_percent}%, белки={proteins_percent}%, жиры={fats_percent}%, углеводы={carbs_percent}%")
-            
-            # Формируем текст со статистикой
-            text = f"📊 Статистика питания за сегодня:\n\n"
-            text += f"Всего приемов пищи: {meals_count}\n\n"
-            text += f"Общие показатели (% от нормы):\n"
-            text += f"• Калории: {total_calories:.1f} ккал ({calories_percent}%)\n"
-            text += f"• Белки: {total_proteins:.1f} г ({proteins_percent}%)\n"
-            text += f"• Жиры: {total_fats:.1f} г ({fats_percent}%)\n"
-            text += f"• Углеводы: {total_carbs:.1f} г ({carbs_percent}%)\n\n"
-            
-            # Добавляем рекомендации
-            if calories_percent < 70:
-                text += "⚠️ Калорий меньше нормы. Рекомендуется увеличить прием пищи.\n"
-            elif calories_percent > 130:
-                text += "⚠️ Превышение калорий. Рекомендуется уменьшить порции.\n"
-            
-            if proteins_percent < 70:
-                text += "💪 Недостаточно белка. Добавьте мясо, рыбу или молочные продукты.\n"
-        else:
-            logging.info("Формирование статистики без веса пользователя")
-            text = f"📊 Статистика питания за сегодня:\n\n"
-            text += f"Всего приемов пищи: {meals_count}\n\n"
-            text += f"Общие показатели:\n"
-            text += f"• Калории: {total_calories:.1f} ккал\n"
-            text += f"• Белки: {total_proteins:.1f} г\n"
-            text += f"• Жиры: {total_fats:.1f} г\n"
-            text += f"• Углеводы: {total_carbs:.1f} г\n\n"
-            text += "ℹ️ Запишите свой вес в разделе прогресса для расчета персональных норм.\n\n"
-        
-        text += "\nПриемы пищи:\n"
-        for meal in meals:
-            name, cals, prots, fats, carbs, time = meal
-            time = time.split('.')[0]  # Убираем миллисекунды
-            text += f"\n🕐 {time}\n"
-            text += f"🍽 {name}\n"
-            text += f"📊 {cals} ккал (Б: {prots}г, Ж: {fats}г, У: {carbs}г)\n"
-        
-        logging.info("Формирование клавиатуры")
-        builder = InlineKeyboardBuilder()
-        builder.add(InlineKeyboardButton(text="📝 Записать прием пищи", callback_data="add_meal"))
-        builder.add(InlineKeyboardButton(text="↩️ В меню питания", callback_data="menu_nutrition"))
-        builder.adjust(1)
-        
-        try:
-            logging.info("Попытка редактирования сообщения")
-            await callback.message.edit_text(text, reply_markup=builder.as_markup())
-            logging.info("Сообщение успешно отредактировано")
-        except TelegramBadRequest as e:
-            logging.error(f"Ошибка при редактировании сообщения: {e}")
-            logging.info("Попытка отправки нового сообщения")
-            await callback.message.answer(text, reply_markup=builder.as_markup())
-            try:
-                logging.info("Попытка удаления старого сообщения")
-                await callback.message.delete()
-                logging.info("Старое сообщение успешно удалено")
-            except Exception as e:
-                logging.error(f"Ошибка при удалении старого сообщения: {e}")
-        
+
     except Exception as e:
-        logging.error(f"Критическая ошибка в show_day_stats: {str(e)}")
-        logging.exception(e)  # Это выведет полный стек ошибки
+        logging.error(f"Ошибка при показе статистики: {str(e)}")
+        builder = InlineKeyboardBuilder()
+        builder.add(InlineKeyboardButton(text="Назад", callback_data="menu_nutrition"))
         await callback.message.edit_text(
-            "Произошла ошибка при загрузке статистики. Попробуйте позже.",
-            reply_markup=InlineKeyboardBuilder().add(
-                InlineKeyboardButton(text="↩️ Назад", callback_data="menu_nutrition")
-            ).as_markup()
+            "Произошла ошибка при загрузке статистики. Пожалуйста, попробуйте позже.",
+            reply_markup=builder.as_markup()
         )
-    
-    logging.info("Завершение выполнения show_day_stats")
+
     await callback.answer()
 
 async def process_tips_section(callback: types.CallbackQuery):
@@ -1356,7 +1361,8 @@ async def register_handlers(dp):
     dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
     dp.callback_query.register(process_menu_selection, F.data.startswith("menu_"))
 
-    # Обработчики тренировок
+    # Обработчики тренировок и напоминаний о тренировках
+    dp.callback_query.register(process_workout_reminder, F.data == "workout_reminders")
     dp.callback_query.register(process_workout_selection, F.data.startswith("workout_"))
     dp.callback_query.register(process_exercise_navigation, F.data.in_(["next_exercise", "prev_exercise"]))
     dp.callback_query.register(end_workout, F.data == "end_workout")
@@ -1367,21 +1373,35 @@ async def register_handlers(dp):
     dp.callback_query.register(process_show_statistics, F.data == "show_statistics")
     dp.callback_query.register(process_show_progress, F.data == "show_progress")
 
-    # Обработчики питания
+    # Обработчики питания и калькулятора калорий
     dp.callback_query.register(process_nutrition_recipes, F.data == "nutrition_recipes")
     dp.callback_query.register(process_recipes_category, F.data.startswith("recipes_"))
     dp.callback_query.register(process_recipe_details, F.data.startswith("recipe_"))
     dp.callback_query.register(process_nutrition_calculator, F.data == "nutrition_calculator")
     dp.callback_query.register(process_nutrition_diary, F.data == "nutrition_diary")
+    dp.message.register(save_calc_weight, UserStates.waiting_for_calc_weight)
+    dp.message.register(save_height, UserStates.waiting_for_height)
+    dp.message.register(save_age, UserStates.waiting_for_age)
+    dp.callback_query.register(save_gender, F.data.startswith("gender_"))
+    dp.callback_query.register(calculate_calories, F.data.startswith("activity_"))
+
+    # Обработчики дневника питания
+    dp.callback_query.register(start_add_meal, F.data == "add_meal")
+    dp.callback_query.register(show_day_stats, F.data == "show_day_stats")
+    dp.message.register(save_meal_name, UserStates.waiting_for_meal_name)
+    dp.message.register(save_meal_calories, UserStates.waiting_for_meal_calories)
+    dp.message.register(save_meal_proteins, UserStates.waiting_for_meal_proteins)
+    dp.message.register(save_meal_fats, UserStates.waiting_for_meal_fats)
+    dp.message.register(save_meal_carbs, UserStates.waiting_for_meal_carbs)
 
     # Обработчики напоминаний
-    dp.callback_query.register(process_workout_reminder, F.data == "workout_reminders")
     dp.callback_query.register(process_meal_reminder, F.data == "meal_reminders")
     dp.callback_query.register(process_reminder_settings, F.data == "reminder_settings")
-    dp.callback_query.register(process_day_selection, F.data.startswith("day_"))
+    dp.callback_query.register(process_day_selection, F.data.in_([
+        "day_monday", "day_tuesday", "day_wednesday", "day_thursday",
+        "day_friday", "day_saturday", "day_sunday"
+    ]))
     dp.callback_query.register(confirm_days_selection, F.data == "confirm_days")
-
-    # Обработчики советов
     dp.callback_query.register(process_tips_section, F.data.startswith("tips_"))
 
     # Обработчики состояний
@@ -1393,22 +1413,4 @@ async def register_handlers(dp):
     dp.message.register(save_thighs, UserStates.waiting_for_thighs)
     dp.message.register(save_workout_time, UserStates.setting_workout_time)
     dp.message.register(save_meal_count, UserStates.setting_meal_count)
-    dp.message.register(save_meal_time, UserStates.setting_meal_time)
-
-    # Обработчики калькулятора калорий
-    dp.callback_query.register(process_nutrition_calculator, F.data == "nutrition_calculator")
-    dp.message.register(save_calc_weight, UserStates.waiting_for_calc_weight)
-    dp.message.register(save_height, UserStates.waiting_for_height)
-    dp.message.register(save_age, UserStates.waiting_for_age)
-    dp.callback_query.register(save_gender, F.data.startswith("gender_"))
-    dp.callback_query.register(calculate_calories, F.data.startswith("activity_"))
-
-    # Обработчики дневника питания
-    dp.callback_query.register(process_nutrition_diary, F.data == "nutrition_diary")
-    dp.callback_query.register(start_add_meal, F.data == "add_meal")
-    dp.callback_query.register(show_day_stats, F.data == "day_stats")
-    dp.message.register(save_meal_name, UserStates.waiting_for_meal_name)
-    dp.message.register(save_meal_calories, UserStates.waiting_for_meal_calories)
-    dp.message.register(save_meal_proteins, UserStates.waiting_for_meal_proteins)
-    dp.message.register(save_meal_fats, UserStates.waiting_for_meal_fats)
-    dp.message.register(save_meal_carbs, UserStates.waiting_for_meal_carbs) 
+    dp.message.register(save_meal_time, UserStates.setting_meal_time) 

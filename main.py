@@ -140,19 +140,6 @@ def get_progress_keyboard():
     builder.adjust(2)
     return builder.as_markup()
 
-def get_nutrition_keyboard():
-    """Клавиатура раздела питания"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.add(InlineKeyboardButton(text="🥗 Рецепты для похудения", callback_data="recipes_loss"))
-    builder.add(InlineKeyboardButton(text="🍖 Рецепты для массы", callback_data="recipes_gain"))
-    builder.add(InlineKeyboardButton(text="🧮 Калькулятор калорий", callback_data="calorie_calculator"))
-    builder.add(InlineKeyboardButton(text="📝 Дневник питания", callback_data="food_diary"))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
-    
-    builder.adjust(2)
-    return builder.as_markup()
-
 def get_reminders_keyboard():
     """Клавиатура раздела напоминаний"""
     builder = InlineKeyboardBuilder()
@@ -166,7 +153,6 @@ def get_reminders_keyboard():
     return builder.as_markup()
 
 def get_tips_keyboard():
-    """Клавиатура раздела советов"""
     builder = InlineKeyboardBuilder()
     
     builder.add(InlineKeyboardButton(text="🏋️ Советы по тренировкам", callback_data="workout_tips"))
@@ -178,7 +164,6 @@ def get_tips_keyboard():
     return builder.as_markup()
 
 def get_exercise_keyboard(session: WorkoutSession):
-    """Создание клавиатуры для управления тренировкой"""
     builder = InlineKeyboardBuilder()
     
     if session.current_exercise > 0:
@@ -192,7 +177,6 @@ def get_exercise_keyboard(session: WorkoutSession):
     return builder.as_markup()
 
 async def check_inactive_sessions():
-    """Проверка и завершение неактивных сессий"""
     while True:
         to_remove = []
         for user_id, session in active_sessions.items():
@@ -209,21 +193,15 @@ async def check_inactive_sessions():
             except Exception as e:
                 logging.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
         
-        await asyncio.sleep(60)  # Проверка каждую минуту
+        await asyncio.sleep(60)
 
 async def main():
-    """Запуск бота"""
-    # Создание таблиц базы данных
     await db.create_tables()
-    
-    # Регистрация всех обработчиков
     await register_handlers(dp)
     
-    # Запуск проверки неактивных сессий
     asyncio.create_task(check_inactive_sessions())
     
     try:
-        # Запуск бота
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except Exception as e:
         logging.error(f"Ошибка при запуске бота: {e}")
