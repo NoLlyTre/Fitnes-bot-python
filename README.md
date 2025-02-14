@@ -36,7 +36,7 @@
 
 1. Клонируйте репозиторий:
 ```bash
-git clone https://github.com/your-username/fitness-bot.git
+git clone https://github.com/NoLLyTre/fitness-bot.git
 cd fitness-bot
 ```
 
